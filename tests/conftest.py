@@ -199,7 +199,9 @@ def stub_result_backend():
 
 @pytest.fixture
 def postgres_result_backend():
-    backend = res_backends.PostgresBackend(url="postgresql://@localhost:5432/postgres")
+    backend = res_backends.PostgresBackend(
+        url="postgresql://postgres:password@localhost:5432/postgres"
+    )
     return backend
 
 
@@ -218,6 +220,6 @@ def result_backends(
     }
 
 
-@pytest.fixture(params=["memcached","redis","stub","postgres"])
+@pytest.fixture(params=["memcached", "redis", "stub", "postgres"])
 def result_backend(request, result_backends):
     return result_backends[request.param]

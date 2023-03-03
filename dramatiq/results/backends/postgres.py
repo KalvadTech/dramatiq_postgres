@@ -23,8 +23,7 @@ class PostgresBackend(ResultBackend):
         `psycopg.connect()` function.
       url(str): An optional connection URL.  If both a URL and
         connection parameters are provided, the URL is used.
-      connection(AsyncConnection): A postgres connection to use, cant be a (connection)
-      due to the heavy use of asyncio
+      connection(Connection): A postgres connection to use, cant be a (AsyncConnection)
     """
 
     def __init__(
@@ -59,10 +58,11 @@ class PostgresBackend(ResultBackend):
         if not self.connection.autocommit:
             raise Exception("Psycopg postgres connection must have autocommit=True")
 
-        # Because of the heavy use of AsyncConnection the use
-        # of a Connection to postgres would not work
+        # checks if the connection used is not a AsyncConnection
         if not isinstance(self.connection, Connection):
-            raise Exception("Please use an Connection to postgres")
+            raise Exception(
+                "Please use an Connection to postgres and not an AsyncConnection"
+            )
 
         # postgres listener
         self.gen = self.connection.notifies()
@@ -119,7 +119,6 @@ class PostgresBackend(ResultBackend):
             return data
 
         try:
-            # loop = asyncio.get_event_loop()
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             wait = asyncio.wait_for(
