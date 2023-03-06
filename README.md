@@ -1,92 +1,33 @@
-<img src="https://dramatiq.io/_static/logo.png" align="right" width="131" />
+# dramatiq_postgres
 
-# dramatiq
+A [Dramatiq] results backend that uses [postgres] to store results.
 
-[![Build Status](https://github.com/Bogdanp/dramatiq/workflows/CI/badge.svg)](https://github.com/Bogdanp/dramatiq/actions?query=workflow%3A%22CI%22)
-[![PyPI version](https://badge.fury.io/py/dramatiq.svg)](https://badge.fury.io/py/dramatiq)
-[![Documentation](https://img.shields.io/badge/doc-latest-brightgreen.svg)](http://dramatiq.io)
-[![Discuss](https://img.shields.io/badge/discuss-online-orange.svg)](https://groups.io/g/dramatiq-users)
+This results backend uses [psycopg].
 
-*A fast and reliable distributed task processing library for Python 3.*
-
-<hr/>
-
-**Changelog**: https://dramatiq.io/changelog.html <br/>
-**Community**: https://groups.io/g/dramatiq-users <br/>
-**Documentation**: https://dramatiq.io <br/>
-
-<hr/>
-
-<h3 align="center">Sponsors</h3>
-
-<p align="center">
-  <a href="https://franz.defn.io" target="_blank">
-    <img width="64px" src="docs/source/_static/franz-logo.png">
-    <br/>
-    Franz: macOS Kafka Client
-  </a>
-  <br/>
-  <br/>
-  <a href="https://www.sendcloud.com/jobs/?utm_source=dramatiq.io&utm_medium=Banner&utm_campaign=Sponsored%20Banner&utm_content=V1" target="_blank">
-    <img width="222px" src="docs/source/_static/sendcloud-logo.png">
-  </a>
-</p>
-
-
-## Installation
-
-If you want to use it with [RabbitMQ]
-
-    pip install 'dramatiq[rabbitmq, watch]'
-
-or if you want to use it with [Redis]
-
-    pip install 'dramatiq[redis, watch]'
-
-
-## Quickstart
-
-Make sure you've got [RabbitMQ] running, then create a new file called
-`example.py`:
+## Usage
 
 ``` python
 import dramatiq
-import requests
-import sys
+from dramatiq.brokers.stub import StubBroker
+from dramatiq.results import Results
 
+from dramatiq_postgres import PostgresBackend
+broker = StubBroker()
+dramatiq.set_broker(broker)
 
-@dramatiq.actor
-def count_words(url):
-    response = requests.get(url)
-    count = len(response.text.split(" "))
-    print(f"There are {count} words at {url!r}.")
+pg_backend = PostgresBackend(
+    connection_params={
+        "user": "postgres",
+        "password": "",
+        "host": "localhost",
+        "port": 5432,
+        "dbname": "dramatiq_results",
+    },
+)
 
-
-if __name__ == "__main__":
-    count_words.send(sys.argv[1])
+broker.add_middleware(Results(backend=pg_backend))
 ```
 
-In one terminal, run your workers:
-
-    dramatiq example
-
-In another, start enqueueing messages:
-
-    python example.py http://example.com
-    python example.py https://github.com
-    python example.py https://news.ycombinator.com
-
-Check out the [user guide] to learn more!
-
-
-## License
-
-dramatiq is licensed under the LGPL.  Please see [COPYING] and
-[COPYING.LESSER] for licensing details.
-
-
-[COPYING.LESSER]: https://github.com/Bogdanp/dramatiq/blob/master/COPYING.LESSER
-[COPYING]: https://github.com/Bogdanp/dramatiq/blob/master/COPYING
-[RabbitMQ]: https://www.rabbitmq.com/
-[Redis]: https://redis.io
-[user guide]: https://dramatiq.io/guide.html
+[Dramatiq]: https://dramatiq.io
+[postgres]: https://www.postgresql.org/
+[psycopg]: https://www.psycopg.org/

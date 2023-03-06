@@ -4,17 +4,15 @@ import random
 import subprocess
 import sys
 
-import pylibmc
+import dramatiq
 import pytest
 import redis
-
-import dramatiq
 from dramatiq import Worker
 from dramatiq.brokers.rabbitmq import RabbitmqBroker
 from dramatiq.brokers.redis import RedisBroker
 from dramatiq.brokers.stub import StubBroker
-from dramatiq.rate_limits import backends as rl_backends
-from dramatiq.results import backends as res_backends
+
+from dramatiq_postgres import PostgresBackend
 
 from .common import RABBITMQ_CREDENTIALS
 
@@ -24,8 +22,7 @@ logging.getLogger("pika").setLevel(logging.WARN)
 
 random.seed(1337)
 
-CI = os.getenv("GITHUB_ACTION") or \
-    os.getenv("APPVEYOR") == "true"
+CI = os.getenv("GITHUB_ACTION") or os.getenv("APPVEYOR") == "true"
 
 
 def check_rabbitmq(broker):
@@ -40,13 +37,6 @@ def check_redis(client):
         client.ping()
     except redis.ConnectionError as e:
         raise e if CI else pytest.skip("No connection to Redis server.") from None
-
-
-def check_memcached(client):
-    try:
-        client.get_stats()
-    except pylibmc.SomeErrors as e:
-        raise e if CI else pytest.skip("No connection to memcached server.") from None
 
 
 @pytest.fixture()
@@ -137,72 +127,20 @@ def start_cli():
 
 
 @pytest.fixture
-def memcached_rate_limiter_backend():
-    backend = rl_backends.MemcachedBackend(servers=["127.0.0.1"], binary=True)
-    with backend.pool.reserve() as client:
-        check_memcached(client)
-        client.flush_all()
+def postgres_result_backend():
+    backend = PostgresBackend(url="postgresql://postgres@localhost:5432/postgres")
     return backend
 
 
 @pytest.fixture
-def redis_rate_limiter_backend():
-    backend = rl_backends.RedisBackend()
-    check_redis(backend.client)
-    backend.client.flushall()
-    return backend
-
-
-@pytest.fixture
-def stub_rate_limiter_backend():
-    return rl_backends.StubBackend()
-
-
-@pytest.fixture
-def rate_limiter_backends(memcached_rate_limiter_backend, redis_rate_limiter_backend, stub_rate_limiter_backend):
+def result_backends(
+    postgres_result_backend,
+):
     return {
-        "memcached": memcached_rate_limiter_backend,
-        "redis": redis_rate_limiter_backend,
-        "stub": stub_rate_limiter_backend,
+        "postgres": postgres_result_backend,
     }
 
 
-@pytest.fixture(params=["memcached", "redis", "stub"])
-def rate_limiter_backend(request, rate_limiter_backends):
-    return rate_limiter_backends[request.param]
-
-
-@pytest.fixture
-def memcached_result_backend():
-    backend = res_backends.MemcachedBackend(servers=["127.0.0.1"], binary=True)
-    with backend.pool.reserve() as client:
-        check_memcached(client)
-        client.flush_all()
-    return backend
-
-
-@pytest.fixture
-def redis_result_backend():
-    backend = res_backends.RedisBackend()
-    check_redis(backend.client)
-    backend.client.flushall()
-    return backend
-
-
-@pytest.fixture
-def stub_result_backend():
-    return res_backends.StubBackend()
-
-
-@pytest.fixture
-def result_backends(memcached_result_backend, redis_result_backend, stub_result_backend):
-    return {
-        "memcached": memcached_result_backend,
-        "redis": redis_result_backend,
-        "stub": stub_result_backend,
-    }
-
-
-@pytest.fixture(params=["memcached", "redis", "stub"])
+@pytest.fixture(params=["postgres"])
 def result_backend(request, result_backends):
     return result_backends[request.param]

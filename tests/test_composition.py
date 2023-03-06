@@ -1,50 +1,15 @@
 import time
-from threading import Condition, Event
-
-import pytest
+from threading import Condition
 
 import dramatiq
-from dramatiq import group, middleware, pipeline
-from dramatiq.middleware import GroupCallbacks
+import pytest
+from dramatiq import group
 from dramatiq.results import Results, ResultTimeout
 
 
-def test_messages_can_be_piped(stub_broker):
-    # Given an actor that adds two numbers together
-    @dramatiq.actor
-    def add(x, y):
-        return x + y
-
-    # When I pipe some messages intended for that actor together
-    pipe = add.message(1, 2) | add.message(3) | add.message(4)
-
-    # Then I should get back a pipeline object
-    assert isinstance(pipe, pipeline)
-
-    # And each message in the pipeline should reference the next message in line
-    assert pipe.messages[0].options["pipe_target"] == pipe.messages[1].asdict()
-    assert pipe.messages[1].options["pipe_target"] == pipe.messages[2].asdict()
-    assert "pipe_target" not in pipe.messages[2].options
-
-
-def test_pipelines_flatten_child_pipelines(stub_broker):
-    # Given an actor that adds two numbers together
-    @dramatiq.actor
-    def add(x, y):
-        return x + y
-
-    # When I pipe a message intended for that actor and another pipeline together
-    pipe = pipeline([add.message(1, 2), add.message(3) | add.message(4), add.message(5)])
-
-    # Then the inner pipeline should be flattened into the outer pipeline
-    assert len(pipe) == 4
-    assert pipe.messages[0].args == (1, 2)
-    assert pipe.messages[1].args == (3,)
-    assert pipe.messages[2].args == (4,)
-    assert pipe.messages[3].args == (5,)
-
-
-def test_pipe_ignore_applies_to_receiving_message(stub_broker, stub_worker, result_backend):
+def test_pipe_ignore_applies_to_receiving_message(
+    stub_broker, stub_worker, result_backend
+):
     # Given a result backend
     # And a broker with the results middleware
     stub_broker.add_middleware(Results(backend=result_backend))
@@ -55,9 +20,9 @@ def test_pipe_ignore_applies_to_receiving_message(stub_broker, stub_worker, resu
 
     # When I compose pipe of three messages with pipe_ignore option on second message
     pipe = (
-        return_args.message(1) |
-        return_args.message_with_options(pipe_ignore=True, args=(2, )) |
-        return_args.message(3)
+        return_args.message(1)
+        | return_args.message_with_options(pipe_ignore=True, args=(2,))
+        | return_args.message(3)
     )
 
     # And then run and wait for it to complete
@@ -268,36 +233,6 @@ def test_groups_expose_completion_stats(stub_broker, stub_worker, result_backend
     assert g.completed
 
 
-def test_pipeline_does_not_continue_to_next_actor_when_message_is_marked_as_failed(stub_broker, stub_worker):
-    # Given that I have an actor that fails messages
-    class FailMessageMiddleware(middleware.Middleware):
-        def after_process_message(self, broker, message, *, result=None, exception=None):
-            message.fail()
-
-    stub_broker.add_middleware(FailMessageMiddleware())
-
-    has_run = False
-
-    @dramatiq.actor
-    def do_nothing():
-        pass
-
-    @dramatiq.actor
-    def should_never_run():
-        nonlocal has_run
-        has_run = True
-
-    # When I pipe some messages intended for that actor together and run the pipeline
-    pipe = do_nothing.message_with_options(pipe_ignore=True) | should_never_run.message()
-    pipe.run()
-
-    stub_broker.join(should_never_run.queue_name, timeout=10 * 1000)
-    stub_worker.join()
-
-    # Then the second message in the pipe should never have run
-    assert not has_run
-
-
 def test_pipeline_respects_own_delay(stub_broker, stub_worker, result_backend):
     # Given a result backend
     # And a broker with the results middleware
@@ -319,7 +254,9 @@ def test_pipeline_respects_own_delay(stub_broker, stub_worker, result_backend):
             pass
 
 
-def test_pipeline_respects_delay_of_first_message(stub_broker, stub_worker, result_backend):
+def test_pipeline_respects_delay_of_first_message(
+    stub_broker, stub_worker, result_backend
+):
     # Given a result backend
     # And a broker with the results middleware
     stub_broker.add_middleware(Results(backend=result_backend))
@@ -340,7 +277,9 @@ def test_pipeline_respects_delay_of_first_message(stub_broker, stub_worker, resu
             pass
 
 
-def test_pipeline_respects_delay_of_second_message(stub_broker, stub_worker, result_backend):
+def test_pipeline_respects_delay_of_second_message(
+    stub_broker, stub_worker, result_backend
+):
     # Given a result backend
     # And a broker with the results middleware
     stub_broker.add_middleware(Results(backend=result_backend))
@@ -361,7 +300,9 @@ def test_pipeline_respects_delay_of_second_message(stub_broker, stub_worker, res
             pass
 
 
-def test_pipeline_respects_bigger_of_first_messages_and_pipelines_delay(stub_broker, stub_worker, result_backend):
+def test_pipeline_respects_bigger_of_first_messages_and_pipelines_delay(
+    stub_broker, stub_worker, result_backend
+):
     # Given a result backend
     # And a broker with the results middleware
     stub_broker.add_middleware(Results(backend=result_backend))
@@ -381,100 +322,3 @@ def test_pipeline_respects_bigger_of_first_messages_and_pipelines_delay(stub_bro
     with pytest.raises(ResultTimeout):
         for _ in pipe.get_results(block=True, timeout=300):
             pass
-
-
-def test_groups_can_have_completion_callbacks(stub_broker, stub_worker, rate_limiter_backend):
-    # Given that I have a rate limiter backend
-    # And I've added the GroupCallbacks middleware to my broker
-    stub_broker.add_middleware(GroupCallbacks(rate_limiter_backend))
-
-    do_nothing_times = []
-    finalize_times = []
-    finalized = Event()
-
-    @dramatiq.actor
-    def do_nothing():
-        do_nothing_times.append(time.monotonic())
-
-    @dramatiq.actor
-    def finalize(n):
-        assert n == 42
-        finalize_times.append(time.monotonic())
-        finalized.set()
-
-    # When I group together some messages with a completion callback
-    g = group(do_nothing.message() for n in range(5))
-    g.add_completion_callback(finalize.message(42))
-    g.run()
-
-    # And wait for the callback to be callled
-    finalized.wait(timeout=30)
-
-    # Then all the messages in the group should run
-    assert len(do_nothing_times) == 5
-
-    # And the callback
-    assert len(finalize_times) == 1
-
-    # And the callback should run after all the messages
-    assert sorted(do_nothing_times)[-1] <= finalize_times[0]
-
-
-def test_groups_with_completion_callbacks_fail_unless_group_callbacks_is_set_up(stub_broker, stub_worker):
-    # Given that I haven't set up GroupCallbacks
-    @dramatiq.actor
-    def do_nothing():
-        pass
-
-    @dramatiq.actor
-    def finalize(n):
-        pass
-
-    # When I group together some messages with a completion callback
-    g = group(do_nothing.message() for n in range(5))
-    g.add_completion_callback(finalize.message(42))
-
-    # And run the group
-    # Then a RuntimeError should be raised
-    with pytest.raises(RuntimeError):
-        g.run()
-
-
-def test_groups_of_pipelines_can_have_completion_callbacks(stub_broker, stub_worker, rate_limiter_backend):
-    # Given that I have a rate limiter backend
-    # And I've added the GroupCallbacks middleware to my broker
-    stub_broker.add_middleware(GroupCallbacks(rate_limiter_backend))
-
-    do_nothing_times = []
-    finalize_times = []
-    finalized = Event()
-
-    @dramatiq.actor
-    def do_nothing(_):
-        do_nothing_times.append(time.monotonic())
-
-    @dramatiq.actor
-    def finalize(n):
-        assert n == 42
-        finalize_times.append(time.monotonic())
-        finalized.set()
-
-    # When I group together some messages with a completion callback
-    g = group([
-        do_nothing.message(1) | do_nothing.message(),
-        do_nothing.message(1)
-    ])
-    g.add_completion_callback(finalize.message(42))
-    g.run()
-
-    # And wait for the callback to be callled
-    finalized.wait(timeout=30)
-
-    # Then all the messages in the group should run
-    assert len(do_nothing_times) == 3
-
-    # And the callback
-    assert len(finalize_times) == 1
-
-    # And the callback should run after all the messages
-    assert sorted(do_nothing_times)[-1] <= finalize_times[0]
