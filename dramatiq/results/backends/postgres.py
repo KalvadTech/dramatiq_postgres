@@ -2,9 +2,10 @@ import datetime
 import typing
 
 import psycopg
-from dramatiq.results.backend import Missing, ResultBackend
 from psycopg import Connection
 from psycopg.sql import SQL, Identifier
+
+from dramatiq.results.backend import Missing, ResultBackend
 
 # Types
 MessageData = typing.Dict[str, typing.Any]
