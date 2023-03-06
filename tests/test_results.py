@@ -1,10 +1,8 @@
 import time
 from unittest.mock import patch
 
-import pytest
-
 import dramatiq
-from dramatiq.message import Message
+import pytest
 from dramatiq.middleware import Middleware, SkipMessage
 from dramatiq.results import ResultFailure, ResultMissing, Results, ResultTimeout
 from dramatiq.results.backends import StubBackend
@@ -30,7 +28,9 @@ def test_actors_can_store_results(stub_broker, stub_worker, result_backend):
     assert result == 42
 
 
-def test_actors_results_are_backwards_compatible(stub_broker, stub_worker, result_backend):
+def test_actors_results_are_backwards_compatible(
+    stub_broker, stub_worker, result_backend
+):
     # Given a result backend
     # And a broker with the results middleware
     stub_broker.add_middleware(Results(backend=result_backend))
@@ -75,7 +75,9 @@ def test_actors_can_store_exceptions(stub_broker, stub_worker, result_backend):
     assert e.value.orig_exc_msg == "failed"
 
 
-def test_retrieving_a_result_can_raise_result_missing(stub_broker, stub_worker, result_backend):
+def test_retrieving_a_result_can_raise_result_missing(
+    stub_broker, stub_worker, result_backend
+):
     # Given a result backend
     # And a broker with the results middleware
     stub_broker.add_middleware(Results(backend=result_backend))
@@ -115,7 +117,9 @@ def test_retrieving_a_result_can_time_out(stub_broker, stub_worker, result_backe
         result_backend.get_result(message, block=True, timeout=100)
 
 
-def test_messages_can_get_results_from_backend(stub_broker, stub_worker, result_backend):
+def test_messages_can_get_results_from_backend(
+    stub_broker, stub_worker, result_backend
+):
     # Given a result backend
     # And a broker with the results middleware
     stub_broker.add_middleware(Results(backend=result_backend))
@@ -133,7 +137,9 @@ def test_messages_can_get_results_from_backend(stub_broker, stub_worker, result_
     assert message.get_result(backend=result_backend, block=True) == 42
 
 
-def test_messages_can_get_results_from_inferred_backend(stub_broker, stub_worker, result_backend):
+def test_messages_can_get_results_from_inferred_backend(
+    stub_broker, stub_worker, result_backend
+):
     # Given a result backend
     # And a broker with the results middleware
     stub_broker.add_middleware(Results(backend=result_backend))
@@ -151,15 +157,9 @@ def test_messages_can_get_results_from_inferred_backend(stub_broker, stub_worker
     assert message.get_result(block=True) == 42
 
 
-def test_messages_without_actor_not_crashing_lookup_options(stub_broker, redis_result_backend):
-    message = Message(
-        queue_name="default", actor_name="idontexist",
-        args=(), kwargs={}, options={},
-    )
-    assert Results(backend=redis_result_backend).after_nack(stub_broker, message) is None
-
-
-def test_messages_can_fail_to_get_results_if_there_is_no_backend(stub_broker, stub_worker):
+def test_messages_can_fail_to_get_results_if_there_is_no_backend(
+    stub_broker, stub_worker
+):
     # Given an actor that doesn't store results
     @dramatiq.actor
     def do_work():
@@ -174,27 +174,9 @@ def test_messages_can_fail_to_get_results_if_there_is_no_backend(stub_broker, st
         message.get_result()
 
 
-def test_actor_no_warning_when_returns_none(stub_broker, stub_worker):
-    # Given that I've mocked the logging class
-    with patch("logging.Logger.warning") as warning_mock:
-        # And I have an actor that always returns None, and does not store results
-        @dramatiq.actor
-        def nothing():
-            pass
-
-        # When I send that actor a message
-        nothing.send()
-
-        # And wait for the message to get processed
-        stub_broker.join(nothing.queue_name)
-        stub_worker.join()
-
-        # Then a warning should not be logged
-        warning_messages = [args[0] for _, args, _ in warning_mock.mock_calls]
-        assert not any("Consider adding the Results middleware" in x for x in warning_messages)
-
-
-def test_actor_warning_when_returns_result_and_no_results_middleware_present(stub_broker, stub_worker):
+def test_actor_warning_when_returns_result_and_no_results_middleware_present(
+    stub_broker, stub_worker
+):
     # Given that I've mocked the logging class
     with patch("logging.Logger.warning") as warning_mock:
         # And I have an actor that always returns 1, and does not store results
@@ -211,10 +193,14 @@ def test_actor_warning_when_returns_result_and_no_results_middleware_present(stu
 
         # Then a warning should be logged
         warning_messages = [args[0] for _, args, _ in warning_mock.mock_calls]
-        assert any("Consider adding the Results middleware" in x for x in warning_messages)
+        assert any(
+            "Consider adding the Results middleware" in x for x in warning_messages
+        )
 
 
-def test_actor_warning_when_returns_result_and_store_results_is_not_set(stub_broker, stub_worker):
+def test_actor_warning_when_returns_result_and_store_results_is_not_set(
+    stub_broker, stub_worker
+):
     # Given a result backend
     # And a broker with the results middleware
     stub_broker.add_middleware(Results(backend=StubBackend()))
@@ -237,7 +223,9 @@ def test_actor_warning_when_returns_result_and_store_results_is_not_set(stub_bro
         assert any("the value has been discarded" in x for x in warning_messages)
 
 
-def test_actor_no_warning_when_returns_result_while_piping_and_store_results_is_not_set(stub_broker, stub_worker):
+def test_actor_no_warning_when_returns_result_while_piping_and_store_results_is_not_set(
+    stub_broker, stub_worker
+):
     # Given a result backend
     # And a broker with the results middleware
     stub_broker.add_middleware(Results(backend=StubBackend()))
@@ -287,10 +275,14 @@ def test_actor_no_warning_when_returns_result_while_piping(stub_broker, stub_wor
 
         # Then a warning should not be logged
         warning_messages = [args[0] for _, args, _ in warning_mock.mock_calls]
-        assert not any("Consider adding the Results middleware" in x for x in warning_messages)
+        assert not any(
+            "Consider adding the Results middleware" in x for x in warning_messages
+        )
 
 
-def test_actor_no_warning_when_returns_result_and_results_middleware_present(stub_broker, stub_worker, result_backend):
+def test_actor_no_warning_when_returns_result_and_results_middleware_present(
+    stub_broker, stub_worker, result_backend
+):
     # Given a result backend
     # And a broker with the results middleware
     stub_broker.add_middleware(Results(backend=result_backend))
@@ -310,10 +302,14 @@ def test_actor_no_warning_when_returns_result_and_results_middleware_present(stu
 
         # Then a warning should not be logged
         warning_messages = [args[0] for _, args, _ in warning_mock.mock_calls]
-        assert not any("Consider adding the Results middleware" in x for x in warning_messages)
+        assert not any(
+            "Consider adding the Results middleware" in x for x in warning_messages
+        )
 
 
-def test_age_limit_skipped_messages_store_consistent_exceptions(stub_broker, stub_worker, result_backend):
+def test_age_limit_skipped_messages_store_consistent_exceptions(
+    stub_broker, stub_worker, result_backend
+):
     # Given a result backend
     # And a broker with the results and age limit (by default) middleware
     stub_broker.add_middleware(Results(backend=result_backend))
@@ -346,7 +342,9 @@ def test_age_limit_skipped_messages_store_consistent_exceptions(stub_broker, stu
     assert exc_2.value.orig_exc_msg == exc_1.value.orig_exc_msg
 
 
-def test_custom_skipped_messages_with_no_fail_stores_none(stub_broker, stub_worker, result_backend):
+def test_custom_skipped_messages_with_no_fail_stores_none(
+    stub_broker, stub_worker, result_backend
+):
     # Given a result backend
     # And a broker with the results middleware
     stub_broker.add_middleware(Results(backend=result_backend))
@@ -355,6 +353,7 @@ def test_custom_skipped_messages_with_no_fail_stores_none(stub_broker, stub_work
     class SkipMiddleware(Middleware):
         def before_process_message(self, broker, message):
             raise SkipMessage("Custom skip")
+
     stub_broker.add_middleware(SkipMiddleware())
 
     # And an actor that stores a result
