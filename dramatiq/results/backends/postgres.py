@@ -1,12 +1,10 @@
-import asyncio
 import datetime
 import typing
 
 import psycopg
-from psycopg import Connection, Notify
+from dramatiq.results.backend import Missing, ResultBackend
+from psycopg import Connection
 from psycopg.sql import SQL, Identifier
-
-from ..backend import DEFAULT_TIMEOUT, ResultBackend, ResultMissing, ResultTimeout
 
 # Types
 MessageData = typing.Dict[str, typing.Any]
@@ -23,7 +21,8 @@ class PostgresBackend(ResultBackend):
         `psycopg.connect()` function.
       url(str): An optional connection URL.  If both a URL and
         connection parameters are provided, the URL is used.
-      connection(Connection): A postgres connection to use, cant be a (AsyncConnection)
+      connection(Connection): A postgres connection to use, if provided
+      will be used instead of connection_params or url. cant be an (AsyncConnection)
     """
 
     def __init__(
@@ -40,110 +39,72 @@ class PostgresBackend(ResultBackend):
         self.url = url
         self.connection_params = connection_params or {}
         self.connection: Connection
-        self.gen: typing.Generator[Notify, None, None]
 
         if not connection:
             if self.url is not None:
-                self.connection = psycopg.Connection.connect(self.url, autocommit=True)
+                self.connection = psycopg.Connection.connect(self.url)
             else:
-                self.connection = psycopg.Connection.connect(
-                    **self.connection_params, autocommit=True
-                )
+                self.connection = psycopg.Connection.connect(**self.connection_params)
         else:
             self.connection = connection
 
-        # Because of the way sessions interact with notifications (see NOTIFY documentation),
-        # you should keep the connection in autocommit mode
-        # if you wish to receive or send notifications in a timely manner.
-        if not self.connection.autocommit:
-            raise Exception("Psycopg postgres connection must have autocommit=True")
-
         # checks if the connection used is not a AsyncConnection
         if not isinstance(self.connection, Connection):
-            raise Exception(
-                "Please use an Connection to postgres and not an AsyncConnection"
-            )
-
-        # postgres listener
-        self.gen = self.connection.notifies()
-        self.connection.execute("LISTEN dramatiq")  # we need to keep requesting
+            raise Exception("Please use a non Async Connection to postgres")
 
         # Create the result table if it doesn't exist
-        self.connection.execute(
-            SQL(
-                "CREATE TABLE IF NOT EXISTS {} ("
-                "message_key VARCHAR(256) PRIMARY KEY,"
-                "result BYTEA NOT NULL,"
-                "created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),"
-                "expires_at TIMESTAMP WITH TIME ZONE NULL"
-                ")"
-            ).format(Identifier(self.namespace)),
-        )
-
-    def get_result(self, message, *, block=False, timeout=None) -> MessageData:
-        """Get a result from the backend.
-        Parameters:
-          message(Message)
-          block(bool): Whether or not to block until a result is set.
-          timeout(int): The maximum amount of time, in ms, to wait for
-            a result when block is True.  Defaults to 10 seconds.
-        Raises:
-          ResultMissing: When the result isn't set.
-          ResultTimeout: When waiting for a result times out.
-        Returns:
-          MessageData: The MessageData.
-        """
-
-        if timeout is None:
-            timeout = DEFAULT_TIMEOUT
-
-        message_key = self.build_message_key(message)
-
-        # Run a asyncio event loop that exits until the timeout timer is reached
-        # this allows for dynamically getting the message if block is True
-        # as otherwise it would have to wait the timeout then look for the message
-        def _get_result(message_key, block):
-            if block and timeout != 0:
-                try:
-                    data = self.postgres_select(message_key)
-                except TypeError:
-                    for notify in self.gen:
-                        if notify.payload == message_key:
-                            break
-
-            data = self.postgres_select(message_key)
-
-            if data is None:
-                raise ResultMissing(message)
-
-            return data
-
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            wait = asyncio.wait_for(
-                loop.run_in_executor(None, _get_result, message_key, block),
-                timeout=timeout / 1000,
+            self.connection.execute(
+                SQL(
+                    "CREATE TABLE IF NOT EXISTS {} ("
+                    "message_key VARCHAR(256) PRIMARY KEY,"
+                    "result BYTEA NOT NULL,"
+                    "created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),"
+                    "expires_at TIMESTAMP WITH TIME ZONE NULL"
+                    ")"
+                ).format(Identifier(self.namespace)),
             )
-            data = loop.run_until_complete(wait)
-            loop.close()
+            self.connection.commit()
+        except psycopg.errors.UniqueViolation:
+            pass
 
-        except TypeError as error:
-            raise ResultMissing(message) from error
-        except asyncio.exceptions.TimeoutError as error:
-            raise ResultTimeout(message) from error
+    def _get(self, message_key: str):
+        """Get the result from the backend.
 
-        return self.unwrap_result(self.encoder.decode(data))
+        Args:
+            message_key (str): The unique identifier for the message
+
+        Returns:
+            data: The stored data
+
+            missing : If the data is None then return this value
+        """
+        data = self.postgres_select(message_key)
+        if data is not None:
+            return self.encoder.decode(data)
+        return Missing
 
     def postgres_select(self, message_key: str):
+        """Query the backend to get the result and expires_at
+        if all_data is none or the message has expired then return None
 
+        Args:
+            message_key (str): The unique identifier for the message
+
+        Returns:
+            data: The stored data
+        """
         exe = self.connection.execute(
             SQL("SELECT result, expires_at FROM {} WHERE message_key=%s").format(
                 Identifier(self.namespace)
             ),
             (message_key,),
         )
+        self.connection.commit()
         all_data = exe.fetchone()
+
+        if all_data is None:
+            return None
 
         data = all_data[0]
 
@@ -151,10 +112,10 @@ class PostgresBackend(ResultBackend):
         time_check = all_data[1]
         if time_check:
             if time_check < datetime.datetime.now().astimezone():
-                data = None
+                return None
         return data
 
-    def _store(self, message_key: str, result: Result, ttl: int):
+    def _store(self, message_key: str, result: Result, ttl: int) -> None:
         """Stores the message inside postgres
 
         Args:
@@ -176,4 +137,4 @@ class PostgresBackend(ResultBackend):
                 expires_at,
             ),
         )
-        self.connection.execute("SELECT pg_notify(%s, %s)", ["dramatiq", message_key])
+        self.connection.commit()
